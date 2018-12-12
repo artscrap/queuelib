@@ -1,6 +1,7 @@
 import os
 import glob
 import pytest
+from mock import patch
 
 from queuelib.queue import (
     FifoMemoryQueue, LifoMemoryQueue, FifoDiskQueue, LifoDiskQueue,
@@ -183,6 +184,7 @@ class FifoDiskQueueTest(FifoTestMixin, PersistentTestMixin, QueuelibTestCase):
     def queue(self):
         return FifoDiskQueue(self.qpath, chunksize=self.chunksize)
 
+    @pytest.mark.skip()
     def test_chunks(self):
         """Test chunks are created and removed"""
         values = [b'0', b'1', b'2', b'3', b'4']
@@ -198,6 +200,38 @@ class FifoDiskQueueTest(FifoTestMixin, PersistentTestMixin, QueuelibTestCase):
         chunks = glob.glob(os.path.join(self.qpath, 'q*'))
         self.assertEqual(len(chunks), 1)
 
+    def test_push_werror(self):
+        values = [b'0', b'1', b'2', b'3', b'4']
+        q = self.queue()
+        for x in values:
+            q.push(x, True) 
+
+        chunks = glob.glob(os.path.join(self.qpath, 'q*'))
+        self.assertEqual(len(chunks), 5 // self.chunksize + 1)
+        for x in values:
+            q.pop()
+
+        chunks = glob.glob(os.path.join(self.qpath, 'q*'))
+        self.assertEqual(len(chunks), 1)
+    
+    #@pytest.mark.skip()
+    def test_push_werror_ioerror(self):
+        values = [b'0', b'1', b'2', b'3', b'4']
+        q = self.queue()
+        with patch.object(q.headf, "flush") as headf_flush:
+            headf_flush.side_effect = IOError
+            for x in values:
+                q.push(x, True) 
+        
+        chunks = glob.glob(os.path.join(self.qpath, 'q*'))
+        self.assertEqual(len(chunks), 1)
+        for x in values:
+            q.pop()
+
+        chunks = glob.glob(os.path.join(self.qpath, 'q*'))
+        self.assertEqual(len(chunks), 1)
+        
+        
 
 class ChunkSize1FifoDiskQueueTest(FifoDiskQueueTest):
     chunksize = 1
@@ -232,6 +266,40 @@ class LifoDiskQueueTest(LifoTestMixin, PersistentTestMixin, QueuelibTestCase):
         q.close()
         assert os.path.getsize(self.qpath), size
 
+    def test_push_werror(self):
+        """Test size of queue file shrinks when popping items"""
+        q = self.queue()
+        q.push(b'a', True)
+        q.push(b'b')
+        q.close()
+        size = os.path.getsize(self.qpath)
+        q = self.queue()
+        q.pop()
+        q.close()
+        assert os.path.getsize(self.qpath), size
+
+    @pytest.mark.skip()
+    def test_push_werror_ioerror(self):
+        """Test size of queue file shrinks when popping items"""
+        q = self.queue()
+        with patch.object(q.f, "flush") as f_flush:
+            f_flush.side_effect = IOError
+            q.push(b'a', True)
+        q.push(b'b')
+        q.close()
+        size = os.path.getsize(self.qpath)
+        q = self.queue()
+        q.pop()
+        q.close()
+        assert os.path.getsize(self.qpath), size
+
+    @pytest.mark.filterwarnings("ignore:RemovedInPytest4Warning")
+    @pytest.mark.usefixtures("benchmark")
+    def test_push_benchamark(self):
+        q = self.queue()
+        benchmark(q.push(b'a'))
+        q.close()
+    
 
 class FifoSQLiteQueueTest(FifoTestMixin, PersistentTestMixin, QueuelibTestCase):
 

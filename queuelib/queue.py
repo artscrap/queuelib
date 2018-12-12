@@ -48,21 +48,44 @@ class FifoDiskQueue(object):
         self.tailf = self._openchunk(self.info['tail'][0])
         os.lseek(self.tailf.fileno(), self.info['tail'][2], os.SEEK_SET)
 
-    def push(self, string):
+    def push(self, string, werror=False):
         if not isinstance(string, bytes):
             raise TypeError('Unsupported type: {}'.format(type(string).__name__))
-        hnum, hpos = self.info['head']
-        hpos += 1
-        szhdr = struct.pack(self.szhdr_format, len(string))
-        os.write(self.headf.fileno(), szhdr + string)
-        if hpos == self.chunksize:
-            hpos = 0
-            hnum += 1
-            self.headf.close()
-            self.headf = self._openchunk(hnum, 'ab+')
-        self.info['size'] += 1
-        self.info['head'] = [hnum, hpos]
+        
+        if not werror:
+            hnum, hpos = self.info['head']
+            hpos += 1
+            szhdr = struct.pack(self.szhdr_format, len(string))
+            os.write(self.headf.fileno(), szhdr + string)
 
+            if hpos == self.chunksize:
+                hpos = 0
+                hnum += 1
+                self.headf.close()
+                self.headf = self._openchunk(hnum, 'ab+')
+            self.info['size'] += 1
+            self.info['head'] = [hnum, hpos]
+        else:
+            try:
+                pos = self.headf.tell()
+                hnum, hpos = self.info['head']
+                hpos += 1
+                szhdr = struct.pack(self.szhdr_format, len(string))
+                os.write(self.headf.fileno(), szhdr + string)
+                self.headf.flush()
+                if hpos == self.chunksize:
+                    hpos = 0
+                    hnum += 1
+                    self.headf.close()
+                    self.headf = self._openchunk(hnum, 'ab+')
+                    self.headf.flush()
+                self.info['size'] += 1
+                self.info['head'] = [hnum, hpos]                 
+            except IOError:
+                self.headf.seek(pos)
+                self.headf.truncate()
+                 
+        
     def _openchunk(self, number, mode='rb'):
         return open(os.path.join(self.path, 'q%05d' % number), mode)
 
@@ -145,14 +168,30 @@ class LifoDiskQueue(object):
             self.f = open(path, 'wb+')
             self.f.write(struct.pack(self.SIZE_FORMAT, 0))
             self.size = 0
-
-    def push(self, string):
+    
+    def push(self, string, werror=False):
         if not isinstance(string, bytes):
             raise TypeError('Unsupported type: {}'.format(type(string).__name__))
-        self.f.write(string)
-        ssize = struct.pack(self.SIZE_FORMAT, len(string))
-        self.f.write(ssize)
-        self.size += 1
+
+        if not werror:
+            self.f.write(string)
+            ssize = struct.pack(self.SIZE_FORMAT, len(string))
+            self.f.write(ssize)
+            self.size += 1
+        else:
+            pos = self.f.tell()
+            try:
+                self.f.write(string)
+                self.f.flush()
+                ssize = struct.pack(self.SIZE_FORMAT, len(string))
+                self.f.write(ssize)
+                self.f.flush()
+                self.size+=1
+            except IOError:        
+                self.f.seek(pos)
+                self.f.truncate()
+                raise
+
 
     def pop(self):
         if not self.size:
